@@ -1,0 +1,27 @@
+#!/bin/bash -ex
+
+# build app
+cd nodejs
+git pull
+npm ci
+
+cd -
+# nginx
+sudo cp nginx/nginx.conf /etc/nginx
+sudo cp nginx/sites-available/*.conf /etc/nginx/sites-available
+sudo systemctl restart nginx.service
+
+# mysql
+sudo cp mysql/conf.d/*.cnf /etc/mysql/conf.d
+sudo cp mysql/mysql.conf.d/*.cnf /etc/mysql/mysql.conf.d 
+sudo systemctl restart mysql.service
+
+# deploy app
+sudo cp nodejs/isucari.nodejs.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart isucari.nodejs.service
+
+#　ログの初期化
+sudo bash -c 'echo > /var/log/nginx/access.log; echo > /var/log/mysql/slow.log;'
+
+sudo journalctl -f
