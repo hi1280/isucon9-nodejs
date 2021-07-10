@@ -351,7 +351,34 @@ async function getNewItems(req: FastifyRequest, reply: FastifyReply<ServerRespon
     const db = await getDBConnection();
     if (itemId > 0 && createdAt > 0) {
         const [rows,] = await db.query(
-            "SELECT * FROM `items` WHERE `status` IN (?,?) AND (`created_at` < ? OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+            `
+            SELECT
+                i.id,
+                i.seller_id,
+                i.status,
+                i.name,
+                i.price,
+                i.image_name,
+                i.category_id,
+                c.parent_id AS category_parent_id,
+                c.category_name,
+                c2.category_name AS category_parent_category_name,
+                u.account_name,
+                u.num_sell_items,
+                i.created_at
+            FROM
+                items i
+            INNER JOIN categories c ON i.category_id = c.id
+            INNER JOIN categories c2 ON c.parent_id = c2.id
+            INNER JOIN users u ON i.seller_id = u.id
+            WHERE
+                status IN (?, ?)
+                    AND (i.created_at < ?
+                    OR (i.created_at <= ?
+                    AND i.id < ?))
+            ORDER BY i.created_at DESC , i.id DESC
+                LIMIT ?
+            `,
             [
                 ItemStatusOnSale,
                 ItemStatusSoldOut,
@@ -366,7 +393,31 @@ async function getNewItems(req: FastifyRequest, reply: FastifyReply<ServerRespon
         }
     } else {
         const [rows,] = await db.query(
-            "SELECT * FROM `items` WHERE `status` IN (?,?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+            `
+            SELECT
+                i.id,
+                i.seller_id,
+                i.status,
+                i.name,
+                i.price,
+                i.image_name,
+                i.category_id,
+                c.parent_id AS category_parent_id,
+                c.category_name,
+                c2.category_name AS category_parent_category_name,
+                u.account_name,
+                u.num_sell_items,
+                i.created_at
+            FROM
+                items i
+            INNER JOIN categories c ON i.category_id = c.id
+            INNER JOIN categories c2 ON c.parent_id = c2.id
+            INNER JOIN users u ON i.seller_id = u.id
+            WHERE
+                status IN (?, ?)
+            ORDER BY i.created_at DESC , i.id DESC
+                LIMIT ?
+            `,
             [
                 ItemStatusOnSale,
                 ItemStatusSoldOut,
@@ -381,29 +432,25 @@ async function getNewItems(req: FastifyRequest, reply: FastifyReply<ServerRespon
     let itemSimples: ItemSimple[] = [];
 
     for (const item of items) {
-        const seller = await getUserSimpleByID(db, item.seller_id);
-        if (seller === null) {
-            replyError(reply, "seller not found", 404)
-            await db.release();
-            return;
-        }
-        const category = await getCategoryByID(db, item.category_id);
-        if (category === null) {
-            replyError(reply, "category not found", 404)
-            await db.release();
-            return;
-        }
-
         itemSimples.push({
             id: item.id,
             seller_id: item.seller_id,
-            seller: seller,
+            seller: {
+                id: item.seller_id,
+                account_name: item.account_name,
+                num_sell_items: item.num_sell_items
+            } as UserSimple,
             status: item.status,
             name: item.name,
             price: item.price,
             image_url: getImageURL(item.image_name),
             category_id: item.category_id,
-            category: category,
+            category: {
+                id: item.category_id,
+                parent_id: item.category_parent_id,
+                category_name: item.category_name,
+                parent_category_name: item.category_parent_category_name
+            } as Category,
             created_at: item.created_at.getTime(),
         });
     }
