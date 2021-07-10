@@ -110,6 +110,9 @@ type Item = {
     description: string;
     image_name: string;
     category_id: number;
+    category_parent_id: number,
+    category_name: string,
+    category_parent_category_name: string,
     created_at: Date;
     updated_at: Date;
 };
@@ -770,7 +773,30 @@ async function getUserItems(req: FastifyRequest, reply: FastifyReply<ServerRespo
     const items: Item[] = [];
     if (itemID > 0 && createdAt > 0) {
         const [rows] = await db.query(
-            "SELECT * FROM `items` WHERE `seller_id` = ? AND `status` IN (?,?,?) AND (`created_at` < ? OR (`created_at` <= ? AND `id` < ?)) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+            `SELECT
+                i.id,
+                i.seller_id,
+                i.status,
+                i.name,
+                i.price,
+                i.image_name,
+                i.category_id,
+                c.parent_id  AS category_parent_id,
+                c.category_name,
+                c2.category_name AS category_parent_category_name,
+                i.created_at
+            FROM
+                items i
+            INNER JOIN categories c ON i.category_id = c.id
+            INNER JOIN categories c2 ON c.parent_id = c2.id
+            WHERE
+                i.seller_id = ?
+                    AND status IN (?, ?, ?)
+                    AND (i.created_at < ?
+                    OR (i.created_at <= ?
+                    AND i.id < ?))
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT ?`,
             [
                 userSimple.id,
                 ItemStatusOnSale,
@@ -788,7 +814,27 @@ async function getUserItems(req: FastifyRequest, reply: FastifyReply<ServerRespo
         }
     } else {
         const [rows] = await db.query(
-            "SELECT * FROM `items` WHERE `seller_id` = ? AND `status` IN (?,?,?) ORDER BY `created_at` DESC, `id` DESC LIMIT ?",
+            `SELECT
+                i.id,
+                i.seller_id,
+                i.status,
+                i.name,
+                i.price,
+                i.image_name,
+                i.category_id,
+                c.parent_id AS category_parent_id,
+                c.category_name,
+                c2.category_name AS category_parent_category_name,
+                i.created_at
+            FROM
+                items i
+            INNER JOIN categories c ON i.category_id = c.id
+            INNER JOIN categories c2 ON c.parent_id = c2.id
+            WHERE
+                i.seller_id = ?
+                    AND status IN (?, ?, ?)
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT ?`,
             [
                 userSimple.id,
                 ItemStatusOnSale,
@@ -805,13 +851,6 @@ async function getUserItems(req: FastifyRequest, reply: FastifyReply<ServerRespo
 
     let itemSimples: ItemSimple[] = [];
     for (const item of items) {
-        const category = await getCategoryByID(db, item.category_id);
-        if (category === null) {
-            replyError(reply, "category not found", 404)
-            await db.release();
-            return;
-        }
-
         itemSimples.push({
             id: item.id,
             seller_id: item.seller_id,
@@ -821,7 +860,12 @@ async function getUserItems(req: FastifyRequest, reply: FastifyReply<ServerRespo
             price: item.price,
             image_url: getImageURL(item.image_name),
             category_id: item.category_id,
-            category: category,
+            category: {
+                id: item.category_id,
+                parent_id: item.category_parent_id,
+                category_name: item.category_name,
+                parent_category_name: item.category_parent_category_name
+            } as Category,
             created_at: item.created_at.getTime(),
         });
     }
