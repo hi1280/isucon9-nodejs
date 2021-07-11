@@ -1301,8 +1301,8 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
         ]
     )
 
-    try {
-        const scr = await shipmentCreate(await getShipmentServiceURL(db), {
+    // try {
+        const tmp_scr = shipmentCreate(await getShipmentServiceURL(db), {
             to_address: buyer.address,
             to_name: buyer.account_name,
             from_address: seller.address,
@@ -1310,12 +1310,14 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
         });
 
         try {
-            const pstr = await paymentToken(await getPaymentServiceURL(db), {
+            const tmp_pstr = paymentToken(await getPaymentServiceURL(db), {
                 shop_id: PaymentServiceIsucariShopID.toString(),
                 token: req.body.token,
                 api_key: PaymentServiceIsucariAPIKey,
                 price: targetItem.price,
             });
+
+            const [scr, pstr] = await Promise.all([tmp_scr, tmp_pstr]);
 
             if (pstr.status === "invalid") {
                 replyError(reply, "カード情報に誤りがあります", 400);
@@ -1354,17 +1356,17 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
                 ]
             );
         } catch (e) {
-            replyError(reply, "payment service is failed", 500)
+            replyError(reply, "payment or shipment service is failed", 500)
             await db.rollback();
             await db.release();
             return;
         }
-    } catch (error) {
-        replyError(reply, "failed to request to shipment service", 500);
-        await db.rollback();
-        await db.release();
-        return;
-    }
+    // } catch (error) {
+    //     replyError(reply, "failed to request to shipment service", 500);
+    //     await db.rollback();
+    //     await db.release();
+    //     return;
+    // }
 
     await db.commit();
     await db.release();
