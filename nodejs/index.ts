@@ -14,6 +14,7 @@ import fastifyMultipart from 'fastify-multipart';
 import crypt from "crypto";
 import bcrypt from "bcrypt";
 import {paymentToken, shipmentCreate, shipmentRequest, shipmentStatus} from "./api";
+import AsyncLock from "async-lock";
 
 const execFile = util.promisify(childProcess.execFile);
 
@@ -1201,6 +1202,9 @@ async function postItemEdit(req: FastifyRequest, reply: FastifyReply<ServerRespo
 
 }
 
+const lock = new AsyncLock({ timeout: 1000 * 30 });
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>) {
     const csrfToken = req.body.csrf_token;
 
@@ -1218,6 +1222,12 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
         await db.release();
         return;
     }
+
+    lock.acquire('my-lock', async () => {
+        await sleep(3000);
+        console.log('lock start');
+    },() => {
+    });
 
     await db.beginTransaction();
 
