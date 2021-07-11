@@ -1,9 +1,10 @@
 #!/bin/bash -ex
 
+git pull
+
 # build app
 cd nodejs
-git pull
-npm ci
+npm install
 
 cd -
 # nginx
