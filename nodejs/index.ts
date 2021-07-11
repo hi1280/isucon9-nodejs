@@ -1203,7 +1203,6 @@ async function postItemEdit(req: FastifyRequest, reply: FastifyReply<ServerRespo
 }
 
 const lock = new AsyncLock({ timeout: 1000 * 30 });
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>) {
     const csrfToken = req.body.csrf_token;
@@ -1223,103 +1222,94 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
         return;
     }
 
-    lock.acquire('my-lock', async () => {
-        await sleep(3000);
-        console.log('lock start');
-    },() => {
-    });
+    await lock.acquire('my-lock', async () => {
+        let targetItem: Item | null = null;
+        {
+            const [rows] = await db.query("SELECT * FROM `items` WHERE `id` = ?", [req.body.item_id]);
 
-    await db.beginTransaction();
-
-    let targetItem: Item | null = null;
-    {
-        const [rows] = await db.query("SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", [req.body.item_id]);
-
-        for (const row of rows) {
-            targetItem = row as Item;
+            for (const row of rows) {
+                targetItem = row as Item;
+            }
         }
-    }
 
-    if (targetItem === null) {
-        replyError(reply, "item not found", 404);
-        await db.rollback();
-        await db.release();
-        return;
-    }
-
-    if (targetItem.status !== ItemStatusOnSale) {
-        replyError(reply, "item is not for sale", 403);
-        await db.rollback();
-        await db.release();
-        return;
-    }
-
-    if (targetItem.seller_id === buyer.id) {
-        replyError(reply, "自分の商品は買えません", 403);
-        await db.rollback();
-        await db.release();
-        return;
-    }
-
-    let seller: User | null = null;
-    {
-        const [rows] = await db.query("SELECT * FROM `users` WHERE `id` = ? FOR UPDATE", [targetItem.seller_id]);
-        for (const row of rows) {
-            seller = row as User;
+        if (targetItem === null) {
+            replyError(reply, "item not found", 404);
+            await db.release();
+            return;
         }
-    }
 
-    if (seller === null) {
-        replyError(reply, "seller not found", 404);
-        await db.rollback();
-        await db.release();
-        return;
-    }
+        if (targetItem.status !== ItemStatusOnSale) {
+            replyError(reply, "item is not for sale", 403);
+            await db.release();
+            return;
+        }
 
-    const category = await getCategoryByID(db, targetItem.category_id);
-    if (category === null) {
-        replyError(reply, "category id error", 500);
-        await db.rollback();
-        await db.release();
-        return;
-    }
+        if (targetItem.seller_id === buyer.id) {
+            replyError(reply, "自分の商品は買えません", 403);
+            await db.release();
+            return;
+        }
 
-    const [result] = await db.query(
-        "INSERT INTO `transaction_evidences` (`seller_id`, `buyer_id`, `status`, `item_id`, `item_name`, `item_price`, `item_description`,`item_category_id`,`item_root_category_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            targetItem.seller_id,
-            buyer.id,
-            TransactionEvidenceStatusWaitShipping,
-            targetItem.id,
-            targetItem.name,
-            targetItem.price,
-            targetItem.description,
-            category.id,
-            category.parent_id,
-        ]
-    );
+        let seller: User | null = null;
+        {
+            const [rows] = await db.query("SELECT * FROM `users` WHERE `id` = ?", [targetItem.seller_id]);
+            for (const row of rows) {
+                seller = row as User;
+            }
+        }
 
-    const transactionEvidenceId = result.insertId;
+        if (seller === null) {
+            replyError(reply, "seller not found", 404);
+            await db.rollback();
+            await db.release();
+            return;
+        }
 
-    await db.query(
-        "UPDATE `items` SET `buyer_id` = ?, `status` = ?, `updated_at` = ? WHERE `id` = ?",
-        [
-            buyer.id,
-            ItemStatusTrading,
-            new Date(),
-            targetItem.id,
-        ]
-    )
+        const category = await getCategoryByID(db, targetItem.category_id);
+        if (category === null) {
+            replyError(reply, "category id error", 500);
+            await db.rollback();
+            await db.release();
+            return;
+        }
 
-    // try {
-        const tmp_scr = shipmentCreate(await getShipmentServiceURL(db), {
-            to_address: buyer.address,
-            to_name: buyer.account_name,
-            from_address: seller.address,
-            from_name: seller.account_name,
-        });
+        await db.beginTransaction();
+
+        const [result] = await db.query(
+            "INSERT INTO `transaction_evidences` (`seller_id`, `buyer_id`, `status`, `item_id`, `item_name`, `item_price`, `item_description`,`item_category_id`,`item_root_category_id`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                targetItem.seller_id,
+                buyer.id,
+                TransactionEvidenceStatusWaitShipping,
+                targetItem.id,
+                targetItem.name,
+                targetItem.price,
+                targetItem.description,
+                category.id,
+                category.parent_id,
+            ]
+        );
+
+        const transactionEvidenceId = result.insertId;
+
+        await db.query(
+            "UPDATE `items` SET `buyer_id` = ?, `status` = ?, `updated_at` = ? WHERE `id` = ?",
+            [
+                buyer.id,
+                ItemStatusTrading,
+                new Date(),
+                targetItem.id,
+            ]
+        )
 
         try {
+            const tmp_scr = shipmentCreate(await getShipmentServiceURL(db), {
+                to_address: buyer.address,
+                to_name: buyer.account_name,
+                from_address: seller.address,
+                from_name: seller.account_name,
+            });
+
             const tmp_pstr = paymentToken(await getPaymentServiceURL(db), {
                 shop_id: PaymentServiceIsucariShopID.toString(),
                 token: req.body.token,
@@ -1343,8 +1333,8 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
             }
 
             if (pstr.status !== 'ok') {
-                replyError(reply, "想定外のエラー", 400)
-                await db.rollback()
+                replyError(reply, "想定外のエラー", 400);
+                await db.rollback();
                 await db.release();
                 return;
             }
@@ -1371,21 +1361,17 @@ async function postBuy(req: FastifyRequest, reply: FastifyReply<ServerResponse>)
             await db.release();
             return;
         }
-    // } catch (error) {
-    //     replyError(reply, "failed to request to shipment service", 500);
-    //     await db.rollback();
-    //     await db.release();
-    //     return;
-    // }
 
-    await db.commit();
-    await db.release();
+        await db.commit();
+        await db.release();
 
-    reply.code(200)
-        .type("application/json;charset=utf-8")
-        .send({
-            transaction_evidence_id: transactionEvidenceId,
-        });
+        reply.code(200)
+            .type("application/json;charset=utf-8")
+            .send({
+                transaction_evidence_id: transactionEvidenceId,
+            });
+
+    });
 
 }
 
